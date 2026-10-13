@@ -1,0 +1,28 @@
+{
+  "mode": "both",
+
+  "monero": {
+    "binary": "xmrig/build/xmrig",
+    "pool": "pool.supportxmr.com:3333",
+    "tls": false,
+    "wallet": "YOUR_MONERO_ADDRESS",
+    "worker": "opi5",
+    "password": "x",
+    "cores_solo": "all",
+    "cores_dual": "big",
+    "api_port": 18088,
+    "extra_args": []
+  },
+
+  "verus": {
+    "binary": "Android-Mining/ccminer",
+    "pool": "stratum+tcp://pool.verus.io:9998",
+    "wallet": "YOUR_VERUS_ADDRESS",
+    "worker": "opi5",
+    "password": "x",
+    "cores_solo": "all",
+    "cores_dual": "little",
+    "api_port": 4068,
+    "extra_args": []
+  }
+}

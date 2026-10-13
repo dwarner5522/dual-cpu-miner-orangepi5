@@ -1,0 +1,7 @@
+config.json
+run/
+dualminer.service
+__pycache__/
+# upstream projects, fetched by setup.sh
+xmrig/
+Android-Mining/
