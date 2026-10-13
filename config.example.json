@@ -1,6 +1,11 @@
 {
   "mode": "both",
 
+  "remote": {
+    "port": 8377,
+    "token": "CHOOSE_A_SHARED_SECRET"
+  },
+
   "monero": {
     "binary": "xmrig/build/xmrig",
     "pool": "pool.supportxmr.com:3333",

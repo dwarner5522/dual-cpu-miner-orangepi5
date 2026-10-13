@@ -11,6 +11,8 @@ monero-only / verus-only / both.
 import argparse
 import ctypes
 import glob
+import hmac
+import http.server
 import json
 import os
 import queue
@@ -138,7 +140,8 @@ class Miner:
     def command(self, cores):
         raise NotImplementedError
 
-    def hashrate(self):
+    def rate(self):
+        """Current hashrate in H/s, or None if the miner's API is not answering."""
         raise NotImplementedError
 
     def running(self):
@@ -229,14 +232,14 @@ class Monero(Miner):
             json.dump(conf, f, indent=2)
         return [self.binary(), "-c", path] + list(c.get("extra_args", []))
 
-    def hashrate(self):
+    def rate(self):
         url = f"http://127.0.0.1:{self.cfg.get('api_port', 18088)}/2/summary"
         try:
             with urllib.request.urlopen(url, timeout=2) as r:
                 hs = json.load(r)["hashrate"]["total"][0]
         except (OSError, ValueError, KeyError, IndexError):
-            return "n/a"
-        return "warming up" if hs is None else f"{hs:.0f} H/s"
+            return None
+        return float(hs or 0)  # null while the RandomX dataset is still building
 
 
 class Verus(Miner):
@@ -251,7 +254,7 @@ class Verus(Miner):
                 "--cpu-affinity", hex(mask),
                 "-b", f"127.0.0.1:{c.get('api_port', 4068)}"] + list(c.get("extra_args", []))
 
-    def hashrate(self):
+    def rate(self):
         try:
             with socket.create_connection(("127.0.0.1", self.cfg.get("api_port", 4068)), 2) as s:
                 s.sendall(b"summary")
@@ -262,12 +265,22 @@ class Verus(Miner):
                           if "=" in kv)
             khs = float(fields["KHS"])
         except (OSError, ValueError, KeyError):
-            return "n/a"
-        return f"{khs / 1000:.2f} MH/s" if khs >= 1000 else f"{khs:.1f} kH/s"
+            return None
+        return khs * 1000
 
 
 def fmt_cores(cores):
     return ",".join(map(str, cores))
+
+
+def fmt_rate(hs):
+    if hs is None:
+        return "n/a"
+    if hs >= 1e6:
+        return f"{hs / 1e6:.2f} MH/s"
+    if hs >= 1e4:
+        return f"{hs / 1e3:.1f} kH/s"
+    return f"{hs:.0f} H/s"
 
 
 # --------------------------------------------------------------- supervisor
@@ -284,6 +297,7 @@ class Supervisor:
                        Verus(cfg["verus"], cfg_dir, self.run_dir)]
         self.q = queue.SimpleQueue()
         self.mode = "off"
+        self.remote = cfg.get("remote") or {}
 
         mode = mode_override or self._saved_mode() or cfg.get("mode", "both")
         mode = ALIASES.get(mode, mode)
@@ -326,15 +340,18 @@ class Supervisor:
             f.write(mode + "\n")
         return f"mode -> {mode}"
 
-    def status(self):
-        lines = [f"mode: {self.mode}"]
+    def status_data(self):
+        """Machine-readable status. Safe to call from other threads."""
+        coins = {}
         for m in self.miners:
-            if m.running():
-                up = int(time.time() - m.started)
-                lines.append(f"{m.key:7} running  cores {fmt_cores(m.cores):12} "
-                             f"up {up // 3600}h{up % 3600 // 60:02}m  {m.hashrate()}")
-            else:
-                lines.append(f"{m.key:7} stopped")
+            proc, cores, started = m.proc, m.cores, m.started
+            running = proc is not None and proc.poll() is None and cores is not None
+            coins[m.key] = {
+                "running": running,
+                "cores": list(cores) if running else [],
+                "uptime": int(time.time() - started) if running else 0,
+                "hashrate": m.rate() if running else None,
+            }
         temps = []
         for path in glob.glob("/sys/class/thermal/thermal_zone*/temp"):
             try:
@@ -342,8 +359,21 @@ class Supervisor:
                     temps.append(int(f.read()) / 1000)
             except (OSError, ValueError):
                 pass
-        if temps:
-            lines.append(f"temp: {max(temps):.0f} C")
+        return {"name": socket.gethostname(), "mode": self.mode, "coins": coins,
+                "temp": round(max(temps)) if temps else None}
+
+    def status(self):
+        data = self.status_data()
+        lines = [f"mode: {data['mode']}"]
+        for key, c in data["coins"].items():
+            if c["running"]:
+                up = c["uptime"]
+                lines.append(f"{key:7} running  cores {fmt_cores(c['cores']):12} "
+                             f"up {up // 3600}h{up % 3600 // 60:02}m  {fmt_rate(c['hashrate'])}")
+            else:
+                lines.append(f"{key:7} stopped")
+        if data["temp"] is not None:
+            lines.append(f"temp: {data['temp']} C")
         return "\n".join(lines)
 
     def tick(self):
@@ -399,6 +429,69 @@ class Supervisor:
         sock.listen(4)
         return sock, path
 
+    def _start_remote(self):
+        """LAN HTTP API used by the control panel: GET /ping, GET /status,
+        POST /mode {"mode": ...}. Everything but /ping needs the shared token."""
+        token = str(self.remote.get("token", ""))
+        if not token or token.startswith("CHOOSE_"):
+            log("remote control disabled (set remote.token in config.json to enable)")
+            return
+        sup = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def send_json(self, code, body):
+                data = json.dumps(body).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def authorized(self):
+                given = self.headers.get("Authorization", "")
+                if hmac.compare_digest(given.encode(), f"Bearer {token}".encode()):
+                    return True
+                self.send_json(401, {"error": "bad or missing token"})
+                return False
+
+            def do_GET(self):
+                if self.path == "/ping":
+                    self.send_json(200, {"dualminer": True, "name": socket.gethostname()})
+                elif self.path == "/status":
+                    if self.authorized():
+                        self.send_json(200, sup.status_data())
+                else:
+                    self.send_json(404, {"error": "not found"})
+
+            def do_POST(self):
+                if self.path != "/mode":
+                    return self.send_json(404, {"error": "not found"})
+                if not self.authorized():
+                    return
+                try:
+                    length = min(int(self.headers.get("Content-Length", 0)), 4096)
+                    mode = str(json.loads(self.rfile.read(length))["mode"])
+                except (ValueError, KeyError, TypeError):
+                    return self.send_json(400, {"error": 'expected {"mode": "..."}'})
+                result = sup.set_mode(mode)
+                ok = result.startswith("mode ->")
+                if ok:
+                    log(f"{result} (remote, from {self.client_address[0]})")
+                self.send_json(200 if ok else 409, {"ok": ok, "message": result, "mode": sup.mode})
+
+        addr = (self.remote.get("bind", "0.0.0.0"), int(self.remote.get("port", 8377)))
+        try:
+            server = http.server.ThreadingHTTPServer(addr, Handler)
+        except OSError as e:
+            log(f"remote control disabled: cannot listen on {addr[0]}:{addr[1]}: {e}")
+            return
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        log(f"remote control listening on {addr[0]}:{addr[1]}")
+
     def _control(self, sock):
         while True:
             try:
@@ -432,6 +525,7 @@ class Supervisor:
     def run(self):
         sock, sock_path = self._open_socket()
         threading.Thread(target=self._control, args=(sock,), daemon=True).start()
+        self._start_remote()
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, lambda *_: self.q.put(("quit", None)))
 

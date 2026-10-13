@@ -46,3 +46,29 @@ giving a coin the same `cores_solo` and `cores_dual` keeps it running untouched
 
 Which coin deserves the big cores is worth benchmarking on your board: swap the
 two `cores_dual` values and compare `./dualminer.py status`.
+
+## Central control panel (Umbrel app)
+
+**Dualminer Control** is an Umbrel app that shows every board on your network and
+switches one or all of them between Both / Monero only / Verus only / Pause.
+
+**1. Enable remote control on each Orange Pi.** Add this block to `config.json`
+(same token on every board), then restart dualminer:
+
+```json
+"remote": { "port": 8377, "token": "a-long-random-secret" },
+```
+
+`openssl rand -hex 24` makes a good token. With no token set, the remote API stays off.
+
+**2. Install the app on Umbrel.** In the Umbrel App Store open the `…` menu →
+*Community App Stores*, add `https://github.com/dwarner5522/umbrel-app-store`,
+then install *Dualminer Control* from it.
+
+**3. Add your boards.** Open the app, save the shared token, then either add each
+board by IP address or scan your network range (e.g. `192.168.1.0/24`). Use IP
+addresses, not `.local` names, and give the boards fixed IPs (DHCP reservations)
+so they stay in the list.
+
+The remote API is plain HTTP protected by the token, intended for a trusted home
+network only: do not forward port 8377 from your router.
