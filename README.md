@@ -14,7 +14,7 @@ cores, restarts them if they crash, and lets you switch live between:
 ## Setup (on the Orange Pi)
 
 ```bash
-git clone <this repo> && cd <this repo>
+git clone https://github.com/dwarner5522/dual-cpu-miner-orangepi5.git && cd dual-cpu-miner-orangepi5
 ./setup.sh              # fetches + builds xmrig, checks ccminer, huge pages, writes dualminer.service
 nano config.json        # set monero.wallet and verus.wallet (and pools if you like)
 ./dualminer.py cores    # confirm which cores were detected as big / little
