@@ -12,23 +12,35 @@ fi
 
 sudo apt-get update
 sudo apt-get install -y git python3 build-essential cmake libuv1-dev libssl-dev libhwloc-dev \
-  libcurl4-openssl-dev libjansson-dev libomp-dev
+  curl libcurl4-openssl-dev libjansson-dev libomp-dev
 
-# The two upstream projects are not vendored in this repo; fetch them if missing.
+# The upstream miners are not vendored in this repo; fetch them if missing.
 [ -d xmrig ] || git clone --depth 1 --branch v6.26.0 https://github.com/xmrig/xmrig.git
-[ -d Android-Mining ] || git clone --depth 1 https://github.com/Oink70/Android-Mining.git
+
+# ccminer must be 3.8.3 or newer: older builds leave the pool nonce out of the
+# solution and every share is rejected ("invalid solution, pool nonce missing").
+CCMINER_URL=https://github.com/Oink70/CCminer-ARM-optimized/releases/download/v3.8.3-4/ccminer-3.8.3-4_ARM
+CCMINER_SHA256=56f71fa313d5f942283ea1d8f02f679088c612f08607928f33612d4f387fb004
+if ! echo "$CCMINER_SHA256  ccminer/ccminer" | sha256sum --check --status 2>/dev/null; then
+  echo "== downloading ccminer 3.8.3 =="
+  mkdir -p ccminer
+  curl -fL -o ccminer/ccminer.tmp "$CCMINER_URL"
+  echo "$CCMINER_SHA256  ccminer/ccminer.tmp" | sha256sum --check --status \
+    || { echo "ccminer download does not match the expected checksum" >&2; exit 1; }
+  mv ccminer/ccminer.tmp ccminer/ccminer
+fi
+chmod +x ccminer/ccminer
 
 echo "== building xmrig =="
 cmake -S xmrig -B xmrig/build -DCMAKE_BUILD_TYPE=Release -DWITH_OPENCL=OFF -DWITH_CUDA=OFF
 cmake --build xmrig/build -j"$(nproc)"
 
 echo "== checking ccminer =="
-chmod +x Android-Mining/ccminer
-if Android-Mining/ccminer --version >/dev/null 2>&1; then
+if ccminer/ccminer --version >/dev/null 2>&1; then
   echo "ccminer runs."
 else
-  echo "!! Android-Mining/ccminer does not start on this system. Missing libraries:"
-  ldd Android-Mining/ccminer | grep "not found" || true
+  echo "!! ccminer/ccminer does not start on this system. Missing libraries:"
+  ldd ccminer/ccminer | grep "not found" || true
   echo "   Either install the missing library (commonly libssl1.1) or build ccminer"
   echo "   from source and point verus.binary in config.json at the result."
 fi
@@ -44,6 +56,11 @@ else
 fi
 
 [ -f config.json ] || { cp config.example.json config.json; chmod 600 config.json; }
+# configs from before the ccminer update point at the old 3.7 binary
+if grep -q '"Android-Mining/ccminer"' config.json; then
+  sed -i 's#"Android-Mining/ccminer"#"ccminer/ccminer"#' config.json
+  echo "Updated verus.binary in config.json to ccminer/ccminer."
+fi
 
 cat > dualminer.service <<EOF
 [Unit]

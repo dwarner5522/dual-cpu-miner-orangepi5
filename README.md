@@ -15,7 +15,7 @@ cores, restarts them if they crash, and lets you switch live between:
 
 ```bash
 git clone https://github.com/dwarner5522/dual-cpu-miner-orangepi5.git && cd dual-cpu-miner-orangepi5
-./setup.sh              # fetches + builds xmrig, checks ccminer, huge pages, writes dualminer.service
+./setup.sh              # builds xmrig, downloads ccminer 3.8.3, huge pages, writes dualminer.service
 nano config.json        # set monero.wallet and verus.wallet (and pools if you like)
 ./dualminer.py cores    # confirm which cores were detected as big / little
 ./dualminer.py          # run
@@ -46,6 +46,12 @@ giving a coin the same `cores_solo` and `cores_dual` keeps it running untouched
 
 Which coin deserves the big cores is worth benchmarking on your board: swap the
 two `cores_dual` values and compare `./dualminer.py status`.
+
+## Troubleshooting
+
+**Verus shares rejected with `invalid solution, pool nonce missing`** – the board is
+running a ccminer older than 3.8.3. Run `git pull && ./setup.sh`, then restart dualminer;
+setup downloads 3.8.3 and points `verus.binary` in `config.json` at it.
 
 ## Central control panel (Umbrel app)
 

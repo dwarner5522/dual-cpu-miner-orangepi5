@@ -20,7 +20,7 @@
   },
 
   "verus": {
-    "binary": "Android-Mining/ccminer",
+    "binary": "ccminer/ccminer",
     "pool": "stratum+tcp://pool.verus.io:9998",
     "wallet": "YOUR_VERUS_ADDRESS",
     "worker": "opi5",
